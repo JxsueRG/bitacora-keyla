@@ -3,6 +3,18 @@ import './globals.css';
 export const metadata = {
   title: 'Bitácora · Keyla · Medibelle',
   description: 'Registro de horas y actividades del servicio social en Medibelle.',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Bitácora Keyla',
+  },
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#3A1F3A',
 };
 
 export default function RootLayout({ children }) {
