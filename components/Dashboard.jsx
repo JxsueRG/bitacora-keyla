@@ -44,6 +44,7 @@ export default function Dashboard() {
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
   const [meta, setMeta] = useState(500);
+  const [toast, setToast] = useState(null);
 
   useEffect(() => {
     const saved = localStorage.getItem(META_KEY);
@@ -51,6 +52,12 @@ export default function Dashboard() {
     setForm((f) => ({ ...f, fecha: new Date().toISOString().slice(0, 10) }));
     loadEntries();
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2800);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   async function loadEntries() {
     setLoading(true);
@@ -115,14 +122,15 @@ export default function Dashboard() {
       horas = toHoursDecimal(form.inicio, form.fin);
     }
     if (horas === null || isNaN(horas)) {
-      setError('Indica hora de entrada y salida, o captura las horas manualmente.');
+      setToast({ type: 'error', msg: 'Indica hora de entrada/salida o captura las horas manualmente.' });
       return;
     }
     if (!form.actividad.trim()) {
-      setError('Describe la actividad realizada.');
+      setToast({ type: 'error', msg: 'Describe la actividad realizada.' });
       return;
     }
 
+    const wasEditing = !!editingId;
     const payload = {
       fecha: form.fecha,
       inicio: form.inicio || null,
@@ -145,8 +153,9 @@ export default function Dashboard() {
       if (!res.ok) throw new Error();
       resetForm();
       await loadEntries();
+      setToast({ type: 'success', msg: wasEditing ? 'Registro actualizado ✓' : 'Registro guardado ✓' });
     } catch {
-      setError('No se pudo guardar el registro. Intenta de nuevo.');
+      setToast({ type: 'error', msg: 'No se pudo guardar el registro. Intenta de nuevo.' });
     } finally {
       setSaving(false);
     }
@@ -158,14 +167,15 @@ export default function Dashboard() {
       const res = await fetch(`/api/entries/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
       await loadEntries();
+      setToast({ type: 'success', msg: 'Registro eliminado' });
     } catch {
-      setError('No se pudo eliminar el registro.');
+      setToast({ type: 'error', msg: 'No se pudo eliminar el registro.' });
     }
   }
 
   function exportCsv() {
     if (filtered.length === 0) {
-      alert('No hay registros en el rango seleccionado.');
+      setToast({ type: 'error', msg: 'No hay registros en el rango seleccionado.' });
       return;
     }
     const header = ['Fecha', 'Entrada', 'Salida', 'Horas', 'Actividad', 'Observaciones'];
@@ -182,8 +192,69 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   }
 
-  function printReport() {
-    window.print();
+  async function generatePdf() {
+    if (filtered.length === 0) {
+      setToast({ type: 'error', msg: 'No hay registros en el rango seleccionado.' });
+      return;
+    }
+    const { jsPDF } = await import('jspdf');
+    const autoTableModule = await import('jspdf-autotable');
+    const autoTable = autoTableModule.default;
+
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+    const plumDark = [58, 31, 58];
+    const gold = [185, 138, 61];
+    const inkSoft = [110, 94, 113];
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFillColor(...plumDark);
+    doc.rect(0, 0, pageWidth, 74, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(17);
+    doc.text('Bitácora de servicio social — Medibelle', 40, 34);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Registrado por: ${NOMBRE}`, 40, 52);
+    doc.text(
+      `Periodo: ${desde ? fmtFecha(desde) : 'inicio'} — ${hasta ? fmtFecha(hasta) : 'hoy'}   ·   Generado el ${fmtFecha(new Date().toISOString().slice(0, 10))}`,
+      40, 66
+    );
+
+    const totalPeriodo = filtered.reduce((s, e) => s + e.horas, 0);
+
+    autoTable(doc, {
+      startY: 96,
+      head: [['Fecha', 'Entrada', 'Salida', 'Horas', 'Actividad', 'Observaciones']],
+      body: filtered.map((e) => [
+        fmtFecha(e.fecha),
+        e.inicio ? e.inicio.slice(0, 5) : '—',
+        e.fin ? e.fin.slice(0, 5) : '—',
+        fmtHoras(e.horas),
+        e.actividad,
+        e.observaciones || '',
+      ]),
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 6, textColor: [46, 34, 51], lineColor: [227, 220, 230] },
+      headStyles: { fillColor: gold, textColor: [46, 34, 51], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [246, 243, 248] },
+      columnStyles: { 3: { halign: 'right' }, 0: { cellWidth: 62 }, 1: { cellWidth: 48 }, 2: { cellWidth: 48 } },
+      foot: [['', '', '', 'Total', fmtHoras(totalPeriodo), '']],
+      footStyles: { fillColor: [255, 255, 255], textColor: plumDark, fontStyle: 'bold', lineWidth: { top: 0.75 } },
+      margin: { left: 40, right: 40 },
+      didDrawPage: (data) => {
+        const pageCount = doc.internal.getNumberOfPages();
+        doc.setFontSize(8);
+        doc.setTextColor(...inkSoft);
+        doc.text(
+          `Página ${data.pageNumber} de ${pageCount}`,
+          pageWidth - 40, doc.internal.pageSize.getHeight() - 24, { align: 'right' }
+        );
+      },
+    });
+
+    doc.save(`bitacora_keyla_${desde || 'inicio'}_${hasta || 'hoy'}.pdf`);
+    setToast({ type: 'success', msg: 'PDF generado ✓' });
   }
 
   const now = new Date();
@@ -194,7 +265,7 @@ export default function Dashboard() {
         <div className="hero-inner">
           <p className="kicker">Medibelle · Servicio social</p>
           <h1>Hola {NOMBRE}, bienvenida</h1>
-          <p className="sub">Aquí va quedando el registro de cada día — cuando te pidan el reporte trimestral, lo generas en un clic.</p>
+          <p className="sub">Aquí va quedando el registro de cada día — cuando te pidan el reporte trimestral, lo descargas en PDF en un clic.</p>
         </div>
       </div>
 
@@ -305,8 +376,8 @@ export default function Dashboard() {
           </div>
 
           <div className="panel">
-            <div className="export-row no-print" style={{ marginBottom: '1rem' }}>
-              <button type="button" className="ghost" onClick={printReport}>Generar reporte / imprimir PDF</button>
+            <div className="export-row" style={{ marginBottom: '1rem' }}>
+              <button type="button" className="primary" onClick={generatePdf}>Descargar PDF</button>
               <button type="button" className="ghost" onClick={exportCsv}>Exportar CSV</button>
             </div>
             <div className="table-scroll">
@@ -316,7 +387,7 @@ export default function Dashboard() {
                     <th>Fecha</th><th>Entrada</th><th>Salida</th>
                     <th style={{ textAlign: 'right' }}>Horas</th>
                     <th>Actividad</th><th>Observaciones</th>
-                    <th className="no-print">Acciones</th>
+                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -327,13 +398,13 @@ export default function Dashboard() {
                   ) : (
                     filtered.slice().reverse().map((e) => (
                       <tr key={e.id}>
-                        <td>{fmtFecha(e.fecha)}</td>
-                        <td>{e.inicio ? e.inicio.slice(0, 5) : '—'}</td>
-                        <td>{e.fin ? e.fin.slice(0, 5) : '—'}</td>
-                        <td className="num">{fmtHoras(e.horas)}</td>
-                        <td className="actividad">{e.actividad}</td>
-                        <td className="obs">{e.observaciones || ''}</td>
-                        <td className="actions no-print">
+                        <td data-label="Fecha">{fmtFecha(e.fecha)}</td>
+                        <td data-label="Entrada">{e.inicio ? e.inicio.slice(0, 5) : '—'}</td>
+                        <td data-label="Salida">{e.fin ? e.fin.slice(0, 5) : '—'}</td>
+                        <td className="num" data-label="Horas">{fmtHoras(e.horas)}</td>
+                        <td className="actividad" data-label="Actividad">{e.actividad}</td>
+                        <td className="obs" data-label="Observaciones">{e.observaciones || ''}</td>
+                        <td className="actions">
                           <button type="button" className="link-btn" onClick={() => startEdit(e)}>Editar</button>{' '}
                           <button type="button" className="danger-link" onClick={() => handleDelete(e.id)}>Eliminar</button>
                         </td>
@@ -345,42 +416,13 @@ export default function Dashboard() {
             </div>
           </div>
         </section>
-
-        <div id="print-report">
-          <h1>Bitácora de servicio social — Medibelle</h1>
-          <div className="meta">
-            Registrado por: {NOMBRE} · Periodo: {desde ? fmtFecha(desde) : 'inicio'} — {hasta ? fmtFecha(hasta) : 'hoy'} · Generado el {fmtFecha(now.toISOString().slice(0, 10))}
-          </div>
-          <table>
-            <thead>
-              <tr><th>Fecha</th><th>Entrada</th><th>Salida</th><th style={{ textAlign: 'right' }}>Horas</th><th>Actividad</th><th>Observaciones</th></tr>
-            </thead>
-            <tbody>
-              {filtered.map((e) => (
-                <tr key={e.id}>
-                  <td>{fmtFecha(e.fecha)}</td>
-                  <td>{e.inicio ? e.inicio.slice(0, 5) : '—'}</td>
-                  <td>{e.fin ? e.fin.slice(0, 5) : '—'}</td>
-                  <td style={{ textAlign: 'right' }}>{fmtHoras(e.horas)}</td>
-                  <td>{e.actividad}</td>
-                  <td>{e.observaciones || ''}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={3} style={{ textAlign: 'right', fontWeight: 600 }}>Total</td>
-                <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtHoras(filtered.reduce((s, e) => s + e.horas, 0))}</td>
-                <td colSpan={2}></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
       </main>
 
-      <footer className="appnote no-print">
+      <footer className="appnote">
         Datos guardados en la base de datos del proyecto en Vercel — visibles desde cualquier dispositivo donde abras este sitio.
       </footer>
+
+      {toast && <div className={`toast ${toast.type}`}>{toast.msg}</div>}
     </>
   );
 }
