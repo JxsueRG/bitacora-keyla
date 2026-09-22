@@ -27,6 +27,10 @@ vercel env pull .env.local   # trae las variables de la base de datos
 npm run dev
 ```
 
+## Notas
+- El botón **Descargar PDF** genera el archivo directamente (sin diálogo de impresión), respetando el filtro de fechas activo.
+- En pantallas de celular, la tabla de registros se muestra como tarjetas apiladas en vez de una tabla ancha.
+
 ## Personalizar
 - El nombre "Keyla" en el saludo está en `components/Dashboard.jsx`, constante `NOMBRE` al inicio del archivo.
 - Colores y tipografías están en `app/globals.css`.
